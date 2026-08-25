@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 
-const STAFF_PASSWORD = "Mimos#Academy2026X";
+const STAFF_PASSWORD = $os.getenv("PB_STAFF_DEFAULT_PASSWORD");
 
 const STAFF = [
   { email: "superadmin@mimos.academy", name: "Aisha Rahman", role: "super_admin" },
@@ -14,6 +14,10 @@ const STAFF = [
 
 migrate(
   (app) => {
+    if (!STAFF_PASSWORD) {
+      throw new Error("PB_STAFF_DEFAULT_PASSWORD must be set before applying the staff provisioning migration.");
+    }
+
     const users = app.findCollectionByNameOrId("users");
 
     if (!users.fields.getByName("role")) {
