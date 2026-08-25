@@ -17,18 +17,20 @@ migrate(
   (app) => {
     for (const [collectionName, indexName, fieldName] of UNIQUE_INDEXES) {
       const col = app.findCollectionByNameOrId(collectionName);
-      const duplicate = app.db().newQuery(`
-        SELECT ${fieldName} AS value, COUNT(*) AS count
-        FROM ${collectionName}
-        WHERE ${fieldName} != ''
-        GROUP BY ${fieldName}
-        HAVING COUNT(*) > 1
-        LIMIT 1
+      const duplicateCount = app.db().newQuery(`
+        SELECT COUNT(*) AS duplicateGroups
+        FROM (
+          SELECT ${fieldName}
+          FROM ${collectionName}
+          WHERE ${fieldName} != ''
+          GROUP BY ${fieldName}
+          HAVING COUNT(*) > 1
+        )
       `).one();
 
-      if (duplicate) {
+      if (Number(duplicateCount.duplicateGroups) > 0) {
         throw new Error(
-          `Cannot enforce unique ${collectionName}.${fieldName}: duplicate value '${duplicate.value}' exists. Resolve duplicate records before applying this migration.`
+          `Cannot enforce unique ${collectionName}.${fieldName}: duplicate non-empty values exist. Resolve duplicate records before applying this migration.`
         );
       }
 
