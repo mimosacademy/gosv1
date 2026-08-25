@@ -1,0 +1,58 @@
+name: PocketBase Runtime Validation
+
+on:
+  push:
+    branches: [main, 'fix/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pocketbase:
+    runs-on: ubuntu-latest
+    env:
+      PB_VERSION: '0.39.8'
+      PB_ENCRYPTION_KEY: 'ci-validation-key-1234567890123456'
+      PB_SUPERUSER_EMAIL: 'ci-superuser@example.invalid'
+      PB_SUPERUSER_PASSWORD: 'CiValidationPassword123!'
+      PB_STAFF_DEFAULT_PASSWORD: 'CiStaffPassword123!'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download PocketBase
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/pocketbase.zip \
+            "https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip"
+          unzip -q /tmp/pocketbase.zip -d /tmp/pocketbase
+          chmod +x /tmp/pocketbase/pocketbase
+
+      - name: Validate migration JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find apps/pocketbase/pb_migrations apps/pocketbase/pb_hooks -type f -name '*.js' -print0 \
+            | xargs -0 -r -n1 node --check
+
+      - name: Apply all migrations against a fresh PocketBase database
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/pocketbase-data
+          mkdir -p /tmp/pocketbase-data
+          /tmp/pocketbase/pocketbase migrate up \
+            --encryptionEnv=PB_ENCRYPTION_KEY \
+            --dir=/tmp/pocketbase-data \
+            --migrationsDir=apps/pocketbase/pb_migrations \
+            --hooksDir=apps/pocketbase/pb_hooks
+
+      - name: Verify migration state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f /tmp/pocketbase-data/data.db
+          test -d /tmp/pocketbase-data
