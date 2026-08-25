@@ -21,7 +21,7 @@ gosv1/
 └── .nvmrc
 ```
 
-The legacy nested `app/` tree is intentionally removed in the cleanup commit because it duplicated the canonical root `apps/` tree.
+The legacy nested `app/` tree was removed because it duplicated the canonical `apps/` tree.
 
 ## Requirements
 
@@ -33,6 +33,14 @@ The legacy nested `app/` tree is intentionally removed in the cleanup commit bec
 ```bash
 npm ci
 ```
+
+## Environment
+
+Copy `apps/web/.env.example` to `apps/web/.env.local` for local frontend configuration.
+
+`VITE_POCKETBASE_API_URL` controls the browser-facing PocketBase base URL and defaults to `/hcgi/platform`, preserving the existing reverse-proxy deployment path.
+
+For PocketBase, set `PB_ENCRYPTION_KEY` in the server environment. Never commit production secrets.
 
 ## Development
 
@@ -50,13 +58,21 @@ npm run build
 
 The web build is emitted to `dist/apps/web`.
 
-## Production start
+## Production runtime
+
+Run PocketBase:
 
 ```bash
-npm run start
+npm run start:backend
 ```
 
-Set `PB_ENCRYPTION_KEY` in the deployment environment before starting PocketBase.
+Run the built frontend with Vite preview when a Node runtime is required:
+
+```bash
+npm run start:web
+```
+
+For Hostinger or another reverse-proxy deployment, serving the generated static frontend through the web server is preferred. Keep PocketBase as a separate persistent backend process and proxy the browser-facing `/hcgi/platform` path to it.
 
 ## Lint
 
@@ -64,12 +80,14 @@ Set `PB_ENCRYPTION_KEY` in the deployment environment before starting PocketBase
 npm run lint
 ```
 
+## CI
+
+GitHub Actions validates dependency installation, linting and the production frontend build on pushes and pull requests.
+
 ## Security notes
 
 - Do not commit `pb_data` production data, secrets, or `.env` files.
 - Supply `PB_ENCRYPTION_KEY` through the hosting environment or secret manager.
 - Review PocketBase API rules and hooks before exposing the service publicly.
-
-## Deployment
-
-Deploy the frontend and PocketBase as separate runtime processes where possible. The frontend is a static Vite build and PocketBase is the stateful backend. Persist PocketBase `pb_data` outside the application release directory.
+- Persist PocketBase `pb_data` outside ephemeral application release directories.
+- Keep the PocketBase admin interface inaccessible to the public unless explicitly required and protected.
