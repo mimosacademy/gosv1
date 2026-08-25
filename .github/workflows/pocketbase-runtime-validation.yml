@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PB_VERSION: '0.39.8'
-      PB_ENCRYPTION_KEY: 'ci-validation-key-1234567890123456'
+      PB_ENCRYPTION_KEY: 'ci-validation-key-12345678901234'
       PB_SUPERUSER_EMAIL: 'ci-superuser@example.invalid'
       PB_SUPERUSER_PASSWORD: 'CiValidationPassword123!'
       PB_STAFF_DEFAULT_PASSWORD: 'CiStaffPassword123!'
