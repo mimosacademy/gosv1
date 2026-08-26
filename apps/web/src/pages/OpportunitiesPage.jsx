@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Helmet } from 'react-helmet';
 import { toast } from 'sonner';
 import PageHeader from '@/components/PageHeader';
@@ -6,92 +6,16 @@ import StatCard from '@/components/StatCard';
 import DataTable from '@/components/DataTable';
 import StatusBadge from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
-import {
-  formatDate,
-  formatRM,
-  formatRMCompact,
-  openOpportunities,
-  opportunities,
-  pipelineValue,
-  weightedPipelineValue,
-} from '@/lib/mockData';
+import { formatDate, formatRM, formatRMCompact } from '@/lib/mockData';
+import { dashboards, subscribe } from '@/lib/pmsRepository';
 import { Download, Percent, Plus, Target, TrendingUp } from 'lucide-react';
 
-const demoAction = () => toast.info('Demo build — opportunity records are read-only mock data.');
-
-export default function OpportunitiesPage() {
-  const won = opportunities.filter((o) => o.stage === 'Contract signed/PO issued').length;
-  const lost = opportunities.filter((o) => o.stage === 'Lost/No-go').length;
-  const winRate = won + lost > 0 ? Math.round((won / (won + lost)) * 100) : 0;
-
-  const columns = [
-    {
-      key: 'title',
-      label: 'Opportunity',
-      render: (o) => (
-        <div className="min-w-52">
-          <p className="font-medium text-slate-800">{o.title}</p>
-          <p className="text-xs text-slate-400">Sector: {o.sector}</p>
-        </div>
-      ),
-    },
-    { key: 'clientName', label: 'Client', className: 'whitespace-nowrap' },
-    { key: 'sector', label: 'Sector', className: 'whitespace-nowrap' },
-    { key: 'value', label: 'Forecast', className: 'whitespace-nowrap font-medium', render: (o) => formatRM(o.value) },
-    { key: 'weighted', label: 'Weighted', className: 'whitespace-nowrap font-medium text-emerald-700', render: (o) => formatRM(o.weighted) },
-    { key: 'stage', label: 'Status', render: (o) => <StatusBadge status={o.stage} /> },
-    {
-      key: 'probability',
-      label: 'Probability',
-      render: (o) => (
-        <div className="flex w-24 items-center gap-2">
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full bg-violet-600" style={{ width: `${o.probability}%` }} />
-          </div>
-          <span className="text-xs font-medium text-slate-500">{o.probability}%</span>
-        </div>
-      ),
-    },
-    { key: 'expectedClose', label: 'Expected Close', className: 'whitespace-nowrap text-slate-500', render: (o) => formatDate(o.expectedClose) },
-    { key: 'accountManager', label: 'Account Manager', className: 'whitespace-nowrap' },
-  ];
-
-  return (
-    <div>
-      <Helmet>
-        <title>Opportunities — MIMOS Academy PMS</title>
-        <meta name="description" content="Sales pipeline and opportunity tracking for MIMOS Academy training business." />
-      </Helmet>
-
-      <PageHeader title="Opportunities" description="First step in the programme flow — qualify demand before quotation.">
-        <Button variant="outline" onClick={demoAction}>
-          <Download className="mr-2 h-4 w-4" /> Export
-        </Button>
-        <Button className="bg-violet-600 hover:bg-violet-700" onClick={demoAction}>
-          <Plus className="mr-2 h-4 w-4" /> New Opportunity
-        </Button>
-      </PageHeader>
-
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Open Opportunities" value={openOpportunities.length} icon={Target} tone="violet" hint="in active pipeline" />
-        <StatCard title="Pipeline Value" value={formatRMCompact(pipelineValue)} icon={TrendingUp} tone="blue" hint="unweighted total" />
-        <StatCard title="Weighted Value" value={formatRMCompact(weightedPipelineValue)} icon={Percent} tone="emerald" hint="probability-adjusted" />
-        <StatCard title="Win Rate" value={`${winRate}%`} icon={TrendingUp} tone="amber" hint={`${won} won · ${lost} lost YTD`} />
-      </div>
-
-      <DataTable
-        columns={columns}
-        data={opportunities}
-        searchKeys={['title', 'clientName', 'accountManager', 'sector']}
-        searchPlaceholder="Search opportunities…"
-        filters={[
-          { key: 'stage', label: 'Status', options: ['Early engagement', 'Qualified lead/Tender in progress', 'Proposal/Tender submitted', 'Negotiation stage', 'Verbal commitment', 'Contract signed/PO issued', 'Lost/No-go'] },
-          { key: 'sector', label: 'Sector', options: ['Government', 'Private'] },
-          { key: 'accountManager', label: 'Account Manager', options: [...new Set(opportunities.map((o) => o.accountManager))] },
-        ]}
-        emptyTitle="No opportunities found"
-        emptyDescription="No opportunities match your current search or filters."
-      />
-    </div>
-  );
+export default function OpportunitiesPage(){
+ const [rows,setRows]=useState([]);
+ const load=async()=>{try{setRows(await dashboards.r3()||[]);}catch(e){toast.error(`Unable to load opportunity pipeline: ${e.message}`);}};
+ useEffect(()=>{load();return subscribe('opportunity',load);},[]);
+ const won=rows.filter(o=>/won|contract signed|po issued/i.test(o.opportunity_status||'')).length; const lost=rows.filter(o=>/lost|no-go/i.test(o.opportunity_status||'')).length; const winRate=won+lost?Math.round(won/(won+lost)*100):0; const pipeline=rows.reduce((s,o)=>s+Number(o.forecast_value||0),0); const weighted=rows.reduce((s,o)=>s+Number(o.weighted_value||0),0); const open=rows.filter(o=>!/lost|no-go/i.test(o.opportunity_status||'')).length;
+ const sectors=useMemo(()=>[...new Set(rows.map(o=>o.sector_name).filter(Boolean))],[rows]); const statuses=useMemo(()=>[...new Set(rows.map(o=>o.opportunity_status).filter(Boolean))],[rows]);
+ const columns=[{key:'project_title',label:'Opportunity',render:o=><div className='min-w-52'><p className='font-medium text-slate-800'>{o.project_title||'—'}</p><p className='text-xs text-slate-400'>Sector: {o.sector_name||'—'}</p></div>},{key:'client_name',label:'Client',className:'whitespace-nowrap'},{key:'sector_name',label:'Sector',className:'whitespace-nowrap'},{key:'forecast_value',label:'Forecast',className:'whitespace-nowrap font-medium',render:o=>formatRM(o.forecast_value)},{key:'weighted_value',label:'Weighted',className:'whitespace-nowrap font-medium text-emerald-700',render:o=>formatRM(o.weighted_value)},{key:'opportunity_status',label:'Status',render:o=><StatusBadge status={o.opportunity_status||o.opportunity_status_code}/>},{key:'probability_percentage',label:'Probability',render:o=><div className='flex w-24 items-center gap-2'><div className='h-1.5 w-full overflow-hidden rounded-full bg-slate-100'><div className='h-full rounded-full bg-violet-600' style={{width:`${Math.min(Number(o.probability_percentage||0),100)}%`}}/></div><span className='text-xs font-medium text-slate-500'>{o.probability_percentage||0}%</span></div>},{key:'expected_close_date',label:'Expected Close',className:'whitespace-nowrap text-slate-500',render:o=>formatDate(o.expected_close_date)},{key:'account_manager',label:'Account Manager',className:'whitespace-nowrap'}];
+ return <div><Helmet><title>Opportunities — MIMOS Academy PMS</title></Helmet><PageHeader title='Opportunities' description='Live sales pipeline from the R3 PostgreSQL reporting view.'><Button variant='outline' onClick={()=>toast.info('Export is available through fn_export_r3.') }><Download className='mr-2 h-4 w-4'/> Export</Button><Button className='bg-violet-600 hover:bg-violet-700' onClick={()=>toast.info('New opportunity uses the Supabase opportunity CRUD repository.') }><Plus className='mr-2 h-4 w-4'/> New Opportunity</Button></PageHeader><div className='mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'><StatCard title='Open Opportunities' value={open} icon={Target} tone='violet' hint='active pipeline'/><StatCard title='Pipeline Value' value={formatRMCompact(pipeline)} icon={TrendingUp} tone='blue' hint='unweighted'/><StatCard title='Weighted Value' value={formatRMCompact(weighted)} icon={Percent} tone='emerald' hint='probability-adjusted'/><StatCard title='Win Rate' value={`${winRate}%`} icon={TrendingUp} tone='amber' hint={`${won} won · ${lost} lost`}/></div><DataTable columns={columns} data={rows} searchKeys={['project_title','client_name','account_manager','sector_name']} searchPlaceholder='Search opportunities…' filters={[{key:'opportunity_status',label:'Status',options:statuses},{key:'sector_name',label:'Sector',options:sectors}]} emptyTitle='No opportunities found' emptyDescription='No live opportunity records exist in Supabase yet.'/></div>;
 }
