@@ -5,19 +5,28 @@ const AuthContext = createContext(null);
 
 async function hydrateUser(sessionUser) {
   if (!sessionUser) return null;
-  const { data: profile } = await supabase
+
+  const { data: profile, error } = await supabase
     .from('profiles')
-    .select('id,email,full_name,role,is_active')
+    .select('id,email,full_name,role,is_active,staff_id')
     .eq('id', sessionUser.id)
     .maybeSingle();
 
+  if (error) throw error;
+
+  // A valid Auth session is not sufficient for PMS access. The profile must be
+  // provisioned and active. This prevents an authenticated but unprovisioned
+  // account from inheriting application access.
+  if (!profile || profile.is_active !== true) return null;
+
   return {
     ...sessionUser,
-    email: profile?.email ?? sessionUser.email,
-    name: profile?.full_name ?? sessionUser.user_metadata?.full_name ?? sessionUser.email,
-    full_name: profile?.full_name ?? sessionUser.user_metadata?.full_name,
-    role: profile?.role ?? 'viewer',
-    is_active: profile?.is_active ?? true,
+    email: profile.email ?? sessionUser.email,
+    name: profile.full_name ?? sessionUser.user_metadata?.full_name ?? sessionUser.email,
+    full_name: profile.full_name ?? sessionUser.user_metadata?.full_name,
+    role: profile.role,
+    is_active: profile.is_active,
+    staff_id: profile.staff_id ?? null,
   };
 }
 
@@ -27,15 +36,34 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let mounted = true;
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!mounted) return;
-      setUser(await hydrateUser(session?.user ?? null));
-      setLoading(false);
-    });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const nextUser = await hydrateUser(session?.user ?? null);
-      if (mounted) setUser(nextUser);
+    const initialise = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const nextUser = await hydrateUser(session?.user ?? null);
+        if (mounted) setUser(nextUser);
+      } catch (error) {
+        console.error('Failed to initialise authentication:', error);
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initialise();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Avoid awaiting Supabase queries inside the Auth callback. Deferring the
+      // profile lookup prevents auth state deadlocks and makes token refreshes safe.
+      setTimeout(async () => {
+        try {
+          const nextUser = await hydrateUser(session?.user ?? null);
+          if (mounted) setUser(nextUser);
+        } catch (error) {
+          console.error('Failed to hydrate authentication profile:', error);
+          if (mounted) setUser(null);
+        }
+      }, 0);
     });
 
     return () => {
@@ -49,23 +77,31 @@ export const AuthProvider = ({ children }) => {
     loading,
     isAuthed: Boolean(user),
     login: async (email, password) => {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      return data;
-    },
-    signup: async (email, password, extraFields = {}) => {
-      const { data, error } = await supabase.auth.signUp({
-        email,
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
         password,
-        options: { data: { full_name: extraFields.full_name ?? extraFields.name ?? '' } },
       });
       if (error) throw error;
+
+      const hydrated = await hydrateUser(data.user);
+      if (!hydrated) {
+        await supabase.auth.signOut();
+        throw new Error('Your account is not provisioned or is inactive. Contact the system administrator.');
+      }
+      setUser(hydrated);
       return data;
     },
-    logout: () => supabase.auth.signOut(),
-    resetPassword: (email) => supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/login`,
-    }),
+    logout: async () => {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setUser(null);
+    },
+    resetPassword: async (email) => {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: `${window.location.origin}/login?reset=1`,
+      });
+      if (error) throw error;
+    },
   }), [user, loading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
