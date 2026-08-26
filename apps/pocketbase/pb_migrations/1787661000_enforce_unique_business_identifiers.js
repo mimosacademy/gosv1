@@ -4,6 +4,7 @@
 // These identifiers are document/master numbers and must not be duplicated.
 // The migration intentionally fails if existing duplicate data is present,
 // rather than silently deleting or rewriting business records.
+// Runtime validation is intentionally required before merge.
 
 const UNIQUE_INDEXES = [
   ["programmes", "idx_programmes_code_unique", "code"],
