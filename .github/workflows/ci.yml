@@ -29,13 +29,13 @@ jobs:
         run: |
           test ! -d apps/pocketbase
           test ! -f apps/web/src/lib/pocketbaseClient.js
-          ! grep -Rni --exclude-dir=.git --exclude='*.md' 'pocketbase' apps package.json supabase tools
-
-      - name: Lint frontend
-        run: npm run lint
+          ! grep -Rni --exclude-dir=.git --exclude='*.md' 'pocketbase' apps package.json supabase
 
       - name: Validate migration tool syntax
         run: python -m py_compile tools/migrate-pocketbase-to-supabase.py
+
+      - name: Lint frontend
+        run: npm run lint
 
       - name: Build frontend
         run: npm run build
