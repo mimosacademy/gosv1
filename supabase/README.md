@@ -1,285 +1,110 @@
-# Supabase migration guide
+# MIMOS Academy PMS — Supabase deployment
 
-## 1. Create the project
+## Migration order
+Run `migrations/001_extensions.sql` through `migrations/012_storage.sql` in numeric order. The files are the PostgreSQL/Supabase target for the legacy MySQL sections in `readme/mimos_pms_section1.sql`–`section4.sql`.
 
-Create a Supabase project and keep the project URL and publishable/anon key. The browser must never receive a `service_role` key.
+### MySQL → PostgreSQL
+- `BIGINT UNSIGNED AUTO_INCREMENT` → `BIGINT GENERATED ALWAYS AS IDENTITY`
+- `DATETIME(6)` → `TIMESTAMPTZ`
+- monetary `DECIMAL` → exact `NUMERIC(18,2)` / `NUMERIC(18,4)`
+- `JSON` → `JSONB`
+- `YEAR` → `INTEGER` + range check
+- `ON UPDATE CURRENT_TIMESTAMP` → `set_updated_at()` trigger
+- `DATEDIFF(CURDATE(), due_date)` → `CURRENT_DATE - due_date`
+- `GROUP_CONCAT` → `string_agg`
+- `FIND_IN_SET` → `ANY(string_to_array(...))`
+- `JSON_ARRAY_APPEND` → `jsonb_set`/`jsonb_insert`/`||`
+- `DELIMITER` procedures → PL/pgSQL functions
+- `utf8mb4` → PostgreSQL UTF-8
 
-## 2. Apply the database
+Money is never stored as floating point. SST uses exact numeric arithmetic. N/A is explicit through `n_a_state` and is never silently substituted for missing data.
 
-In Supabase SQL Editor, run these files in order:
+## Auth and staff
+`public.profiles.id` references `auth.users.id`. A trigger creates profiles for new users. Roles are `admin`, `staff`, `viewer` and are enforced by RLS.
 
-1. `migrations/0001_core_schema.sql`
-2. `migrations/0002_security_functions_views.sql`
+Provision the 19 staff from the repository's mapping workbook on a trusted machine:
 
-The first migration creates the relational model. The second creates authentication profile handling, business functions, reporting views, RLS and the private `programme-documents` Storage bucket.
-
-## 3. Authentication
-
-Enable Email/Password in Supabase Auth. For an internal staff system, disable public sign-up after the initial provisioning process and create staff accounts administratively.
-
-After a user exists in `auth.users`, the trigger creates `public.profiles`. Set the business role explicitly:
-
-```sql
-update public.profiles
-set role = 'admin'
-where email = 'admin@example.com';
+```bash
+pip install -r tools/requirements.txt
+export SUPABASE_URL=https://<project-ref>.supabase.co
+export SUPABASE_SERVICE_ROLE_KEY=<server-only-secret>
+python tools/provision_staff.py "readme/User Profiles Mapping.xlsx"
 ```
 
-Use `staff` for normal PIC/Staff accounts and `viewer` for read-only accounts.
+Existing PocketBase password hashes are not copied blindly. Users receive a controlled password-reset flow unless a verified server-side legacy-hash adapter is introduced.
 
-Password hashes should not be copied manually. For existing PocketBase users, use a controlled password-reset migration unless a server-side migration process has been verified for the exact legacy hash format.
+## Data migration
+Run against a COPY of the PocketBase SQLite database:
 
-## 4. RLS model
+```bash
+python tools/migrate_to_supabase.py --sqlite /path/to/pb_data/data.db --database-url "$DATABASE_URL" --dry-run
+python tools/migrate_to_supabase.py --sqlite /path/to/pb_data/data.db --database-url "$DATABASE_URL"
+```
 
-All business tables require an authenticated Supabase session. `viewer` can read but cannot write. `staff` can create/update operational data. `admin` has administrative write/delete rights.
+Excel files in `readme/` are staged into `source_file`, `import_batch`, and `stg_import_row`. `migration_id_map` preserves legacy IDs. Conflicts go to `data_conflict` rather than being silently overwritten.
 
-Application role is resolved from `public.profiles`, not from a client-supplied value. Never trust a role stored in localStorage or React state for authorization.
+## Storage
+Private bucket: `pms-documents`.
 
-## 5. Storage
+Recommended path: `programmes/{programme_id}/{uuid}-{filename}`. Store the path in `documents.storage_path` and issue short-lived signed URLs for downloads.
 
-The SQL migration creates a private bucket named `programme-documents`.
-
-Recommended path:
+## Frontend environment
+Local/Vercel:
 
 ```text
-programmes/<programme_id>/<uuid>-<safe-file-name>
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<publishable-or-anon-key>
 ```
 
-Store the resulting Storage path in `public.documents.storage_path`. Use signed URLs when a private document must be downloaded.
+Never expose `SUPABASE_SERVICE_ROLE_KEY` or a Supabase secret key in browser code or `VITE_*` variables.
 
-## 6. Frontend environment
+## PocketBase → Supabase examples
 
-Create `apps/web/.env.local`:
-
-```text
-VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_ANON_KEY
-```
-
-Vercel uses the same variables under Project Settings → Environment Variables.
-
-## 7. PocketBase → Supabase operation mapping
-
-### Client initialization
-
-Before:
-
-```js
-const pb = new PocketBase('https://api.mimosacademy.com');
-```
-
-After:
+Initialization:
 
 ```js
 import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
-);
+const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 ```
 
-### List/filter
-
-Before:
+List/filter:
 
 ```js
-const records = await pb.collection('programmes').getList(1, 50, {
-  filter: 'status = "active"',
-});
-```
-
-After:
-
-```js
-const { data, error } = await supabase
-  .from('programmes')
-  .select('*', { count: 'exact' })
-  .eq('status', 'Scheduled')
-  .order('created_at', { ascending: false })
-  .range(0, 49);
-
+const { data, error } = await supabase.from('programme').select('*').eq('programme_status_id', statusId).range(0,49);
 if (error) throw error;
 ```
 
-### Authentication
-
-Before:
+Auth:
 
 ```js
-const authData = await pb.collection('users').authWithPassword(email, password);
-```
-
-After:
-
-```js
-const { data: authData, error } = await supabase.auth.signInWithPassword({
-  email,
-  password,
-});
-
+const { data, error } = await supabase.auth.signInWithPassword({email,password});
 if (error) throw error;
-```
-
-Logout:
-
-```js
 await supabase.auth.signOut();
 ```
 
-Password reset:
+Relational query:
 
 ```js
-await supabase.auth.resetPasswordForEmail(email, {
-  redirectTo: `${window.location.origin}/login`,
-});
+const { data, error } = await supabase.from('programme').select('*,client:client_id(*),quotation:quotation(*),purchase_order:purchase_order(*),invoice:invoice(*),participant:participant(*)').eq('id',id).single();
 ```
 
-### CRUD
+Realtime:
 
 ```js
-const { data, error } = await supabase
-  .from('clients')
-  .insert({ name: 'Example Client', status: 'Active' })
-  .select()
-  .single();
-```
-
-```js
-const { data, error } = await supabase
-  .from('clients')
-  .update({ phone: '+60312345678' })
-  .eq('id', clientId)
-  .select()
-  .single();
-```
-
-```js
-const { error } = await supabase
-  .from('clients')
-  .delete()
-  .eq('id', clientId);
-```
-
-### Relational query / PocketBase expand equivalent
-
-PocketBase expand:
-
-```js
-pb.collection('programmes').getOne(id, { expand: 'client' });
-```
-
-Supabase:
-
-```js
-const { data, error } = await supabase
-  .from('programmes')
-  .select('*, clients(*), quotations(*), purchase_orders(*), invoices(*), participants(*)')
-  .eq('id', id)
-  .single();
-```
-
-### Realtime
-
-PocketBase:
-
-```js
-pb.collection('programmes').subscribe('*', callback);
-```
-
-Supabase:
-
-```js
-const channel = supabase
-  .channel('programmes')
-  .on(
-    'postgres_changes',
-    { event: '*', schema: 'public', table: 'programmes' },
-    (payload) => callback(payload),
-  )
-  .subscribe();
-
+const channel = supabase.channel('programmes').on('postgres_changes',{event:'*',schema:'public',table:'programme'},callback).subscribe();
 return () => supabase.removeChannel(channel);
 ```
 
-Realtime must be enabled for the tables that need live updates. Do not enable it indiscriminately for every table.
-
-### File upload
-
-PocketBase embedded-file pattern:
+File upload:
 
 ```js
-await pb.collection('programmes').create({ file: new File(...) });
+const path=`programmes/${programmeId}/${crypto.randomUUID()}-${file.name}`;
+await supabase.storage.from('pms-documents').upload(path,file,{upsert:false});
+await supabase.from('documents').insert({programme_id:programmeId,name:file.name,storage_path:path,file_size:file.size,document_type:file.type});
 ```
 
-Supabase separates binary storage from relational metadata:
+## Vercel + Hostinger
+Import the repository into Vercel and set the two `VITE_*` variables for Production/Preview as appropriate. Keep the Hostinger domain registration; point its DNS records to the exact Vercel target shown by Vercel. Then add the production URL to Supabase Auth redirect/origin settings.
 
-```js
-const path = `programmes/${programmeId}/${crypto.randomUUID()}-${file.name}`;
-
-const { error: uploadError } = await supabase.storage
-  .from('programme-documents')
-  .upload(path, file, { upsert: false });
-
-if (uploadError) throw uploadError;
-
-const { error: dbError } = await supabase
-  .from('documents')
-  .insert({
-    programme_id: programmeId,
-    name: file.name,
-    storage_path: path,
-    file_size: file.size,
-    document_type: file.type,
-  });
-
-if (dbError) throw dbError;
-```
-
-For downloads from the private bucket:
-
-```js
-const { data, error } = await supabase.storage
-  .from('programme-documents')
-  .createSignedUrl(storagePath, 300);
-```
-
-## 8. Vercel deployment
-
-Import the repository into Vercel. Keep the repository root as the project root. Set:
-
-```text
-VITE_SUPABASE_URL
-VITE_SUPABASE_ANON_KEY
-```
-
-Build command:
-
-```text
-npm run build
-```
-
-The existing Vercel SPA rewrite keeps React Router routes working after direct navigation.
-
-## 9. Hostinger DNS
-
-Keep the domain registered with Hostinger. In Hostinger DNS, use the exact records Vercel displays for the chosen hostname. After DNS propagates, add the same production URL to Supabase Auth redirect URLs.
-
-Do not create an application reverse proxy through the former backend path.
-
-## 10. Validation before decommissioning the old system
-
-Run the migration tool against a backup/copy first. Compare:
-
-- row counts by entity;
-- client/programme/invoice/payment relationships;
-- invoice totals and payment totals;
-- outstanding balances;
-- date/time values;
-- Malaysian names containing apostrophes and non-ASCII characters;
-- source file and source row lineage;
-- conflict queue size;
-- completeness scores;
-- all staff emails and role assignments.
-
-Only after the new system passes these checks should the old backend be taken offline.
+## Cutover verification
+Do not decommission PocketBase until row counts, relationships, invoice/payment totals, outstanding balances, timestamps, Malaysian/non-ASCII names, source lineage, conflict queue, completeness scores, staff emails and role assignments all reconcile.
