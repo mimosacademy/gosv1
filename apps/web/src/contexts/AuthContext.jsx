@@ -5,18 +5,12 @@ const AuthContext = createContext(null);
 
 async function hydrateUser(sessionUser) {
   if (!sessionUser) return null;
-
   const { data: profile, error } = await supabase
     .from('profiles')
     .select('id,email,full_name,role,is_active,staff_id')
     .eq('id', sessionUser.id)
     .maybeSingle();
-
   if (error) throw error;
-
-  // A valid Auth session is not sufficient for PMS access. The profile must be
-  // provisioned and active. This prevents an authenticated but unprovisioned
-  // account from inheriting application access.
   if (!profile || profile.is_active !== true) return null;
 
   return {
@@ -36,7 +30,6 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let mounted = true;
-
     const initialise = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
@@ -49,12 +42,9 @@ export const AuthProvider = ({ children }) => {
         if (mounted) setLoading(false);
       }
     };
-
     initialise();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      // Avoid awaiting Supabase queries inside the Auth callback. Deferring the
-      // profile lookup prevents auth state deadlocks and makes token refreshes safe.
       setTimeout(async () => {
         try {
           const nextUser = await hydrateUser(session?.user ?? null);
@@ -65,7 +55,6 @@ export const AuthProvider = ({ children }) => {
         }
       }, 0);
     });
-
     return () => {
       mounted = false;
       subscription.unsubscribe();
@@ -78,11 +67,9 @@ export const AuthProvider = ({ children }) => {
     isAuthed: Boolean(user),
     login: async (email, password) => {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
+        email: email.trim().toLowerCase(), password,
       });
       if (error) throw error;
-
       const hydrated = await hydrateUser(data.user);
       if (!hydrated) {
         await supabase.auth.signOut();
