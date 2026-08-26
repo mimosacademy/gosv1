@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'fix/**']
+    branches: [main, 'fix/**', 'feat/**']
   pull_request:
     branches: [main]
 
@@ -20,23 +20,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
 
       - name: Install dependencies
-        # The committed lockfile currently contains newer semver ranges than
-        # apps/web/package.json. npm ci correctly rejects that mismatch. Use
-        # npm install here so CI can reconcile the lockfile in the ephemeral
-        # runner; dependency lockfile synchronization is tracked separately.
         run: npm install --no-audit --no-fund
+
+      - name: Assert legacy backend is absent
+        shell: bash
+        run: |
+          test ! -d apps/pocketbase
+          test ! -f apps/web/src/lib/pocketbaseClient.js
+          ! grep -Rni --exclude-dir=.git --exclude='*.md' 'pocketbase' apps package.json supabase tools
 
       - name: Lint frontend
         run: npm run lint
 
-      - name: Validate PocketBase JavaScript syntax
-        shell: bash
-        run: |
-          find apps/pocketbase/pb_migrations apps/pocketbase/pb_hooks -type f -name '*.js' -print0 \
-            | xargs -0 -r -n1 node --check
+      - name: Validate migration tool syntax
+        run: python -m py_compile tools/migrate-pocketbase-to-supabase.py
 
       - name: Build frontend
         run: npm run build
