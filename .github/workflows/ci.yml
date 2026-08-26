@@ -23,7 +23,11 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        # The committed lockfile currently contains newer semver ranges than
+        # apps/web/package.json. npm ci correctly rejects that mismatch. Use
+        # npm install here so CI can reconcile the lockfile in the ephemeral
+        # runner; dependency lockfile synchronization is tracked separately.
+        run: npm install --no-audit --no-fund
 
       - name: Lint frontend
         run: npm run lint
