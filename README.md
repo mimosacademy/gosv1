@@ -1,147 +1,107 @@
-# gosv1
+# MIMOS Academy PMS
 
-Production-oriented monorepo containing the web application and PocketBase backend.
+Production-oriented React/Vite application using Supabase for PostgreSQL, Auth, Storage and Realtime, with Vercel as the frontend deployment target.
 
 ## Deployment architecture
-
-**Production frontend: Vercel**
-
-**Production backend: PocketBase on a persistent server/runtime**
-
-Vercel is used for the React/Vite frontend only. PocketBase is stateful and runs as a separate persistent backend service; it is not started by the Vercel deployment.
 
 ```text
 Browser
    |
    | HTTPS
    v
-Vercel (React + Vite static frontend)
+Vercel (React + Vite)
    |
-   | HTTPS / VITE_POCKETBASE_API_URL
-   v
-PocketBase (persistent server)
+   +---- Supabase Auth
+   +---- Supabase PostgreSQL + RLS
+   +---- Supabase Realtime
+   +---- Supabase Storage
    |
-   +-- pb_data / SQLite
-   +-- pb_hooks
-   +-- pb_migrations
+   +---- Hostinger DNS/domain -> Vercel
 ```
+
+The application no longer requires a persistent application server. The former stateful backend is removed from the application workspace.
 
 ## Stack
 
 - Web: React 18 + Vite 7
-- Backend: PocketBase 0.39.8
+- Backend platform: Supabase
+- Database: PostgreSQL
+- Auth: Supabase Auth
+- Storage: Supabase Storage
+- Realtime: Supabase Realtime
+- Frontend deployment: Vercel
+- Domain/DNS: Hostinger
 - Package manager: npm workspaces
-- Node.js: version pinned by `.nvmrc`
 
 ## Repository layout
 
 ```text
 gosv1/
-├── apps/
-│   ├── web/          # React/Vite frontend deployed to Vercel
-│   └── pocketbase/   # PocketBase runtime, hooks and migrations
+├── apps/web/                 # React/Vite frontend
+├── supabase/
+│   ├── migrations/           # PostgreSQL schema, functions, views, RLS, Storage
+│   └── README.md             # Supabase setup and deployment guide
+├── tools/
+│   ├── migrate-pocketbase-to-supabase.py
+│   └── requirements.txt
 ├── .github/workflows/ci.yml
-├── vercel.json       # Vercel build/output/SPA routing
+├── vercel.json
 ├── package.json
-├── package-lock.json
 └── .nvmrc
-```
-
-The legacy nested `app/` tree was removed because it duplicated the canonical `apps/` tree.
-
-## Requirements
-
-- Node.js version specified by `.nvmrc`
-- npm compatible with the lockfile
-
-## Install
-
-```bash
-npm ci
 ```
 
 ## Environment
 
-### Vercel
-
-Create this environment variable in the Vercel project:
+Set these in Vercel and local `apps/web/.env.local`:
 
 ```text
-VITE_POCKETBASE_API_URL=https://YOUR-POCKETBASE-DOMAIN
+VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
 ```
 
-Do not use `localhost`, `127.0.0.1`, or the old Hostinger `/hcgi/platform` path in the Vercel production environment.
+Never expose a Supabase `service_role` key in the browser or any `VITE_*` variable.
 
-`VITE_POCKETBASE_API_URL` is a browser-visible URL, so it must contain only the public PocketBase base URL. Never put private credentials or admin tokens in any `VITE_*` variable.
-
-### PocketBase server
-
-Set server-side secrets in the PocketBase runtime environment, including:
-
-```text
-PB_ENCRYPTION_KEY=<strong-random-secret>
-```
-
-Any staff provisioning secret must also be supplied through the PocketBase runtime environment and must never be committed to source control.
-
-## Development
+## Install and run
 
 ```bash
+npm install
 npm run dev
 ```
 
-This starts the web application on port `3000` and PocketBase on port `8090` for local development.
+The frontend runs on port 3000.
 
-## Vercel production build
+## Supabase setup
 
-The repository contains `vercel.json` configured for the Vite frontend:
+1. Create a Supabase project.
+2. Open the SQL Editor.
+3. Run `supabase/migrations/0001_core_schema.sql`.
+4. Run `supabase/migrations/0002_security_functions_views.sql`.
+5. Configure Auth email/password and redirect URLs for the Vercel domain.
+6. Create/provision staff accounts, then assign explicit roles in `public.profiles`.
+7. Confirm the `programme-documents` private Storage bucket exists and its policies are enabled.
+8. Add the Vercel production URL to Supabase Auth redirect/origin configuration.
 
-```bash
-npm ci
-npm run build
-```
+## Data migration
 
-Build output:
+The legacy PocketBase migration utility is replaced by `tools/migrate-pocketbase-to-supabase.py`. It reads a backed-up PocketBase SQLite database, exports/normalizes supported enterprise collections, preserves source row information, and loads the relational data into PostgreSQL in dependency order.
 
-```text
-dist/apps/web
-```
+The migration must be run against a copy of the old SQLite database first. Do not delete the old database until row counts, relationships, financial totals and authentication accounts have been verified.
 
-When importing the repository into Vercel, use the repository root as the project root. The committed `vercel.json` supplies the build command and output directory.
+## Vercel
 
-## PocketBase production runtime
+The repository is configured for Vercel + Vite. Import the repository, keep the repository root as the project root, and set the two Supabase environment variables above. Vercel builds the frontend with `npm run build`.
 
-PocketBase must run outside Vercel on a persistent server/runtime capable of keeping its SQLite database and filesystem state.
+## Hostinger domain
 
-```bash
-npm run start:backend
-```
+Keep the domain registered at Hostinger and point the production hostname to the Vercel project using the DNS records shown by Vercel. Do not route application traffic through the old backend path.
 
-Persist `apps/pocketbase/pb_data` on the backend host. Do not deploy or track production `pb_data` from Git.
+## Security
 
-The public PocketBase URL must be HTTPS and must allow the Vercel production origin through PocketBase CORS/origin configuration.
-
-## Lint
-
-```bash
-npm run lint
-```
-
-## CI
-
-GitHub Actions validates dependency installation, linting and the production frontend build on pushes and pull requests.
-
-## Security requirements
-
-- Do not commit `pb_data` production data, secrets, or `.env` files.
-- Do not expose PocketBase admin credentials to the browser.
-- Do not put secrets in `VITE_*` variables.
-- Supply `PB_ENCRYPTION_KEY` through the PocketBase hosting environment or secret manager.
-- Keep PocketBase admin access restricted and protected.
-- Review PocketBase collection API rules before exposing the backend publicly.
-- Configure HTTPS and CORS for the production Vercel origin.
-- Persist PocketBase `pb_data` outside ephemeral application release directories.
-
-## Important Vercel limitation
-
-Vercel is the frontend deployment target. The PocketBase executable in `apps/pocketbase/pocketbase` is not part of the Vercel runtime. Do not attempt to start PocketBase from a Vercel build, serverless function, or static frontend deployment.
+- Browser code uses only the Supabase publishable/anon key.
+- Database access is protected by PostgreSQL Row Level Security.
+- `admin`, `staff` and `viewer` are application roles stored in `public.profiles`.
+- Viewers are read-only.
+- Audit tables are append-oriented and sensitive audit data is restricted.
+- Monetary values use PostgreSQL `numeric`, never JavaScript/database floating-point storage.
+- N/A is represented explicitly by `n_a_state`; it is not silently substituted for missing data.
+- Production secrets and `.env` files must never be committed.
