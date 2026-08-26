@@ -1,18 +1,16 @@
 {
-  "name": "monorepo",
-  "version": "0.0.0",
+  "name": "mimos-academy-pms",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "setup": "npm install",
-    "dev": "concurrently --kill-others --raw \"npm run dev --prefix apps/web\" \"npm run dev --prefix apps/pocketbase\"",
+    "dev": "npm run dev --prefix apps/web",
     "build": "npm run build --prefix apps/web",
-    "start": "npm run start:backend",
+    "start": "npm run start --prefix apps/web",
     "start:web": "npm run start --prefix apps/web",
-    "start:backend": "npm run start --prefix apps/pocketbase",
     "lint": "npm run lint --prefix apps/web"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4",
     "knip": "^6.32.1"
   },
   "workspaces": [

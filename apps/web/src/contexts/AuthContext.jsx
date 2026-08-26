@@ -1,31 +1,75 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import pb from '@/lib/pocketbaseClient';
+import supabase from '@/lib/supabaseClient';
 
 const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(pb.authStore.record);
+async function hydrateUser(sessionUser) {
+  if (!sessionUser) return null;
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('id,email,full_name,role,is_active')
+    .eq('id', sessionUser.id)
+    .maybeSingle();
 
-    useEffect(() => pb.authStore.onChange((_token, record) => setUser(record)), []);
-
-    const value = useMemo(
-        () => ({
-            user,
-            isAuthed: pb.authStore.isValid,
-            login: (email, password) => pb.collection('users').authWithPassword(email, password),
-            signup: async (email, password, extraFields = {}) => {
-                await pb.collection('users').create({ email, password, passwordConfirm: password, ...extraFields });
-
-                return pb.collection('users').authWithPassword(email, password);
-            },
-            logout: () => pb.authStore.clear(),
-        }),
-        [user],
-    );
-
-    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return {
+    ...sessionUser,
+    email: profile?.email ?? sessionUser.email,
+    name: profile?.full_name ?? sessionUser.user_metadata?.full_name ?? sessionUser.email,
+    full_name: profile?.full_name ?? sessionUser.user_metadata?.full_name,
+    role: profile?.role ?? 'viewer',
+    is_active: profile?.is_active ?? true,
+  };
 }
 
-export const useAuth = () => useContext(AuthContext);
+export const AuthProvider = ({ children }) => {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!mounted) return;
+      setUser(await hydrateUser(session?.user ?? null));
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const nextUser = await hydrateUser(session?.user ?? null);
+      if (mounted) setUser(nextUser);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const value = useMemo(() => ({
+    user,
+    loading,
+    isAuthed: Boolean(user),
+    login: async (email, password) => {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      return data;
+    },
+    signup: async (email, password, extraFields = {}) => {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: extraFields.full_name ?? extraFields.name ?? '' } },
+      });
+      if (error) throw error;
+      return data;
+    },
+    logout: () => supabase.auth.signOut(),
+    resetPassword: (email) => supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/login`,
+    }),
+  }), [user, loading]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+export const useAuth = () => useContext(AuthContext);
 export default AuthContext;
